@@ -31,7 +31,7 @@ if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
   process.exit(1);
 }
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -219,6 +219,235 @@ function isCellSelected(line: number, col: number): boolean {
   if (line === s.line) return col >= s.col;
   if (line === e.line) return col <= e.col;
   return true;
+}
+
+// ─── Copy selection → system clipboard via OSC 52 ──────────────────────────
+//
+// After a drag releases with a non-empty selection we emit the OSC 52
+// "set clipboard" escape sequence. Every major terminal emulator (gnome-
+// terminal, konsole, iTerm2, alacritty, kitty, wezterm, ghostty) acts on
+// it. Ctrl+Shift+C couldn't copy our custom selection because gnome-
+// terminal never sees it — this bridges the gap by writing directly to
+// the system clipboard as soon as the user finishes the drag.
+
+function readSelectedText(): string {
+  if (!selection) return "";
+  const s = selStart()!;
+  const e = selEnd()!;
+  if (s.line === e.line && s.col === e.col) return "";
+
+  const buf = xterm.buffer.active;
+  const lines: string[] = [];
+  for (let y = s.line; y <= e.line; y++) {
+    const line = buf.getLine(y);
+    if (!line) { lines.push(""); continue; }
+    const startCol = y === s.line ? s.col : 0;
+    const endCol = y === e.line ? e.col : line.length - 1;
+    let text = "";
+    for (let x = startCol; x <= endCol; x++) {
+      const cell = line.getCell(x);
+      if (!cell) continue;
+      if (cell.getWidth() === 0) continue; // second half of wide char
+      text += cell.getChars() || " ";
+    }
+    lines.push(text.replace(/\s+$/, ""));
+  }
+  return lines.join("\n");
+}
+
+// Returns a clipboard-write command for the current OS, or null if none
+// is available. Cached after first resolution.
+let _clipboardCmd: { cmd: string; args: string[] } | null | undefined;
+function resolveClipboardCmd(): { cmd: string; args: string[] } | null {
+  if (_clipboardCmd !== undefined) return _clipboardCmd;
+  const has = (bin: string) => {
+    try {
+      execSync(`command -v ${bin}`, { stdio: "ignore" });
+      return true;
+    } catch { return false; }
+  };
+  if (process.platform === "darwin") {
+    _clipboardCmd = { cmd: "pbcopy", args: [] };
+  } else if (process.platform === "win32") {
+    _clipboardCmd = { cmd: "clip", args: [] };
+  } else if (has("wl-copy")) {
+    _clipboardCmd = { cmd: "wl-copy", args: [] };
+  } else if (has("xclip")) {
+    _clipboardCmd = { cmd: "xclip", args: ["-selection", "clipboard"] };
+  } else if (has("xsel")) {
+    _clipboardCmd = { cmd: "xsel", args: ["--clipboard", "--input"] };
+  } else {
+    _clipboardCmd = null;
+  }
+  return _clipboardCmd;
+}
+
+function readClipboard(): string {
+  const sys = resolveClipboardCmd();
+  if (!sys) return "";
+  // For reading we need the companion tool, not the writer:
+  // pbcopy → pbpaste, clip → Get-Clipboard, wl-copy → wl-paste,
+  // xclip write → xclip -o, xsel write → xsel -o
+  const readMap: Record<string, { cmd: string; args: string[] }> = {
+    pbcopy:  { cmd: "pbpaste",       args: [] },
+    clip:    { cmd: "powershell.exe", args: ["-Command", "Get-Clipboard"] },
+    "wl-copy": { cmd: "wl-paste",    args: ["--no-newline"] },
+    xclip:   { cmd: "xclip",         args: ["-selection", "clipboard", "-o"] },
+    xsel:    { cmd: "xsel",          args: ["--clipboard", "--output"] },
+  };
+  const reader = readMap[sys.cmd];
+  if (!reader) return "";
+  try {
+    const result = spawnSync(reader.cmd, reader.args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 500,
+    });
+    return result.stdout ?? "";
+  } catch { return ""; }
+}
+
+function copySelectionToClipboard(): number {
+  const text = readSelectedText();
+  if (!text) return 0;
+
+  // Two parallel paths so at least one works on every (OS, terminal) combo:
+  //
+  //   1. OSC 52 — works in kitty, alacritty, wezterm, iTerm2, ghostty,
+  //      and (if enabled) konsole. Terminal-level; survives SSH.
+  //
+  //   2. System clipboard command (pbcopy / clip / wl-copy / xclip / xsel)
+  //      — works in VTE-based terminals (gnome-terminal, xfce4-terminal)
+  //      and any other setup where OSC 52 is blocked, provided the tool
+  //      is installed on Linux.
+
+  const b64 = Buffer.from(text, "utf8").toString("base64");
+  process.stdout.write(`\x1b]52;c;${b64}\x1b\\`);
+
+  const sys = resolveClipboardCmd();
+  if (sys) {
+    try {
+      spawnSync(sys.cmd, sys.args, {
+        input: text,
+        stdio: ["pipe", "ignore", "ignore"],
+        timeout: 500,
+      });
+    } catch { /* fall through — OSC 52 may still have worked */ }
+  }
+
+  return text.length;
+}
+
+// ─── Context menu (right-click popup) ──────────────────────────────────────
+
+interface MenuItem { label: string; action: () => void; enabled: boolean }
+interface ContextMenu { items: MenuItem[]; cursor: number; row: number; col: number }
+let ctxMenu: ContextMenu | null = null;
+
+function ctxMenuWidth(m: ContextMenu): number {
+  const longest = Math.max(...m.items.map(i => i.label.length));
+  return longest + 4; // 2 border + 2 padding
+}
+
+function ctxMenuHeight(m: ContextMenu): number {
+  return m.items.length + 2; // 2 border
+}
+
+function renderContextMenu(): string {
+  if (!ctxMenu) return "";
+  const w = ctxMenuWidth(ctxMenu);
+  const { row, col } = ctxMenu;
+  const out: string[] = [];
+  out.push(moveTo(row, col) + `${CYAN}╭${"─".repeat(w - 2)}╮${NC}`);
+  ctxMenu.items.forEach((item, i) => {
+    const isCursor = i === ctxMenu!.cursor;
+    const fg = isCursor ? `${CSI}30;46m` : item.enabled ? `${CSI}37m` : DIM;
+    const label = ` ${item.label} `.padEnd(w - 2);
+    out.push(moveTo(row + 1 + i, col) + `${CYAN}│${NC}${fg}${label}${NC}${CYAN}│${NC}`);
+  });
+  out.push(moveTo(row + 1 + ctxMenu.items.length, col) + `${CYAN}╰${"─".repeat(w - 2)}╯${NC}`);
+  return out.join("");
+}
+
+function pasteFromClipboard() {
+  const text = readClipboard();
+  if (!text) return;
+  pty.write(text);
+}
+
+function selectAllInBuffer() {
+  const buf = xterm.buffer.active;
+  const lastLine = buf.length - 1;
+  const lastCol = Math.max(0, lineLen(lastLine) - 1);
+  selection = {
+    anchor: { line: 0, col: 0 },
+    cursor: { line: lastLine, col: lastCol },
+    mode: "char",
+    dragging: false,
+  };
+  const copied = copySelectionToClipboard();
+  if (copied > 0) {
+    panelMessage = `✂  all ${copied} chars copied to clipboard`;
+    setTimeout(() => {
+      if (panelMessage.startsWith("✂")) { panelMessage = ""; refreshPanel(); }
+    }, 3000);
+  }
+}
+
+function clearScreenInPty() {
+  // Ctrl+L — standard "clear screen" in most shells/TUIs
+  pty.write("\x0c");
+}
+
+// Mouse tracking: 1002 = button-events (motion only while button held),
+// 1003 = any-events (motion even without button). We swap to 1003 while
+// the context menu is open so hover-highlight works, then back to 1002
+// to keep the idle event stream quiet.
+const MOUSE_TRACK_ON  = `${CSI}?1002h${CSI}?1006h`;
+const MOUSE_TRACK_OFF = `${CSI}?1002l${CSI}?1006l`;
+const MOUSE_HOVER_ON  = `${CSI}?1003h${CSI}?1006h`;
+const MOUSE_HOVER_OFF = `${CSI}?1003l`;
+
+function enableHoverTracking() {
+  process.stdout.write(MOUSE_HOVER_ON);
+}
+function disableHoverTracking() {
+  process.stdout.write(MOUSE_HOVER_OFF);
+}
+
+// After a menu-item activation the button's release event still arrives
+// (press+release are separate SGR events). Without suppression it hits the
+// normal left-click handler and overwrites the selection we just set in
+// the action (e.g. "Select all" would be clipped back to the click point).
+let suppressNextMouseRelease = false;
+
+function buildContextMenu(row: number, col: number): ContextMenu {
+  const hasSelection = !!selection;
+  const items: MenuItem[] = [
+    { label: "Paste",             action: () => { pasteFromClipboard(); }, enabled: true },
+    { label: "Copy selection",    action: () => { copySelectionToClipboard(); }, enabled: hasSelection },
+    { label: "Select all",        action: () => { selectAllInBuffer(); }, enabled: true },
+    { label: "Clear screen",      action: () => { clearScreenInPty(); }, enabled: true },
+    { label: "Scroll to top",     action: () => { xterm.scrollToTop(); }, enabled: true },
+    { label: "Scroll to bottom",  action: () => { xterm.scrollToBottom(); }, enabled: true },
+  ];
+  // Keep menu inside the terminal viewport
+  const { cols, code } = layout();
+  const w = Math.max(...items.map(i => i.label.length)) + 4;
+  const h = items.length + 2;
+  const clampedRow = Math.min(row, code - h + 1);
+  const clampedCol = Math.min(col, cols - w - SCROLLBAR_RESERVED);
+  return { items, cursor: 0, row: Math.max(1, clampedRow), col: Math.max(1, clampedCol) };
+}
+
+function isClickOnMenu(my: number, mx: number): number {
+  if (!ctxMenu) return -1;
+  const w = ctxMenuWidth(ctxMenu);
+  const { row, col } = ctxMenu;
+  if (mx < col || mx >= col + w) return -1;
+  const idx = my - row - 1;
+  if (idx < 0 || idx >= ctxMenu.items.length) return -1;
+  return idx;
 }
 
 function renderScrollbar(term: any, startRow: number, codeRows: number, col: number): string {
@@ -485,9 +714,13 @@ function setupPanel() {
       out.push(moveTo(row, 2) + `${colorOn}${prefix}${text}${NC}`);
     }
 
-    // Panel message (bottom row if there's a message)
+    // Panel message (bottom row if there's a message) — rendered as a
+    // highlighted badge so brief feedback (e.g. clipboard copy) is easy to spot.
     if (i === contentRows - 1 && panelMessage) {
-      out.push(moveTo(row, 2) + `${GREEN}✓ ${panelMessage}${NC}`);
+      const badge = `  ${panelMessage}  `;
+      // Bold black text on bright green background — stands out against
+      // the biome. Using SGR 30 (black fg) + 102 (bright green bg).
+      out.push(moveTo(row, 2) + `${CSI}1;30;102m${badge}${NC}`);
     }
 
     // Structure from biome (right of buddy, on the ground)
@@ -597,7 +830,11 @@ function renderNow() {
   parts.push(`${CSI}?25l`);
   parts.push(renderXtermViewport(xterm, 1, h, innerCols));
   parts.push(renderScrollbar(xterm, 1, h, c));
-  if (isAtBottom) {
+  // Context menu goes on top of the xterm viewport, below scrollbar.
+  if (ctxMenu) {
+    parts.push(renderContextMenu());
+  }
+  if (isAtBottom && !ctxMenu) {
     parts.push(moveTo(buf.cursorY + 1, buf.cursorX + 1));
     parts.push(`${CSI}?25h`);
   }
@@ -653,6 +890,61 @@ process.stdin.on("data", (data: Buffer) => {
       // Only handle mouse in the code area (not panel)
       if (my < 1 || my > mouseCode) continue;
 
+      // Context menu interception — all mouse events go to the menu.
+      // Hover updates the cursor (highlight), click activates the item.
+      if (ctxMenu) {
+        // Any motion (hover or drag) → update highlight if over an item
+        if (isMotion || (!release && btn === 3)) {
+          const idx = isClickOnMenu(my, mx);
+          if (idx >= 0 && ctxMenu.items[idx].enabled) {
+            ctxMenu.cursor = idx;
+          }
+          handled = true;
+          continue;
+        }
+        // Any press on an item → activate (left/middle/right all fine)
+        if (!release) {
+          const idx = isClickOnMenu(my, mx);
+          if (idx >= 0) {
+            const item = ctxMenu.items[idx];
+            if (item?.enabled) item.action();
+            ctxMenu = null;
+            disableHoverTracking();
+            suppressNextMouseRelease = true;
+            handled = true;
+            continue;
+          }
+          // press outside menu → close it
+          ctxMenu = null;
+          disableHoverTracking();
+          suppressNextMouseRelease = true;
+          handled = true;
+          continue;
+        }
+        // Swallow all release events while menu is open
+        handled = true;
+        continue;
+      }
+
+      // Eat the first release after a menu-item click so it doesn't land
+      // in the normal selection handler and mutate the cursor.
+      if (release && suppressNextMouseRelease) {
+        suppressNextMouseRelease = false;
+        handled = true;
+        continue;
+      }
+
+      // Right-click OR middle-click press → open context menu.
+      // Middle-click is a fallback for terminals (like xfce4-terminal /
+      // gnome-terminal with certain settings) that capture right-click
+      // for their own native menu and don't forward it to the app.
+      if ((btn === 2 || btn === 1) && !release && !isMotion) {
+        ctxMenu = buildContextMenu(my, mx);
+        enableHoverTracking();
+        handled = true;
+        continue;
+      }
+
       // Left button only (press/motion/release)
       if (btn === 0 || (release && rawBtn === 0)) {
         const buf = xterm.buffer.active;
@@ -664,6 +956,16 @@ process.stdin.on("data", (data: Buffer) => {
           if (selection) {
             selection.cursor = { line: bufLine, col: bufCol };
             selection.dragging = false;
+            // If the drag actually selected something, copy it to the
+            // system clipboard via OSC 52. Skips no-op clicks.
+            const copied = copySelectionToClipboard();
+            if (copied > 0) {
+              panelMessage = `✂  copied ${copied} chars to clipboard`;
+              refreshPanel();
+              setTimeout(() => {
+                if (panelMessage.startsWith("✂")) { panelMessage = ""; refreshPanel(); }
+              }, 3000);
+            }
           }
         } else if (isMotion) {
           // Motion with button held — update cursor (only if we have an active drag)
@@ -693,6 +995,44 @@ process.stdin.on("data", (data: Buffer) => {
     }
 
     if (handled) renderNow();
+    return;
+  }
+
+  // Context menu is active — consume navigation keys
+  if (ctxMenu) {
+    if (s === "\x1b") {
+      ctxMenu = null; disableHoverTracking(); renderNow(); return;
+    }
+    if (s === "\x1b[A") {
+      ctxMenu.cursor = Math.max(0, ctxMenu.cursor - 1);
+      while (ctxMenu.cursor > 0 && !ctxMenu.items[ctxMenu.cursor].enabled) ctxMenu.cursor--;
+      renderNow();
+      return;
+    }
+    if (s === "\x1b[B") {
+      ctxMenu.cursor = Math.min(ctxMenu.items.length - 1, ctxMenu.cursor + 1);
+      while (ctxMenu.cursor < ctxMenu.items.length - 1 && !ctxMenu.items[ctxMenu.cursor].enabled) ctxMenu.cursor++;
+      renderNow();
+      return;
+    }
+    if (s === "\r" || s === "\n") {
+      const item = ctxMenu.items[ctxMenu.cursor];
+      ctxMenu = null;
+      disableHoverTracking();
+      if (item?.enabled) item.action();
+      renderNow();
+      return;
+    }
+    return; // swallow everything else while menu is open
+  }
+
+  // F10 (\x1b[21~) — open context menu via keyboard (terminal-agnostic,
+  // works even when the terminal emulator eats right-click itself).
+  if (s === "\x1b[21~") {
+    const { code: h, cols: c } = layout();
+    ctxMenu = buildContextMenu(Math.floor(h / 2), Math.floor(c / 2) - 10);
+    enableHoverTracking();
+    renderNow();
     return;
   }
 
