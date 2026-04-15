@@ -184,6 +184,7 @@ function installHooks(settings: Record<string, any>) {
   const reactHook     = join(PROJECT_ROOT, "hooks", "react.sh");
   const fileTypeHook  = join(PROJECT_ROOT, "hooks", "file-type-react.sh");
   const commentHook   = join(PROJECT_ROOT, "hooks", "buddy-comment.sh");
+  const suggestHook   = join(PROJECT_ROOT, "hooks", "suggest.sh");
   const nameHook      = join(PROJECT_ROOT, "hooks", "name-react.sh");
   const moodHook      = join(PROJECT_ROOT, "hooks", "mood-react.sh");
 
@@ -212,6 +213,9 @@ function installHooks(settings: Record<string, any>) {
   settings.hooks.Stop.push({
     hooks: [{ type: "command", command: toUnixPath(commentHook) }],
   });
+  settings.hooks.Stop.push({
+    hooks: [{ type: "command", command: toUnixPath(suggestHook) }],
+  });
 
   // UserPromptSubmit: detect buddy's name in user message → instant status line
   // reaction, plus mood-react based on prompt content.
@@ -226,7 +230,7 @@ function installHooks(settings: Record<string, any>) {
     hooks: [{ type: "command", command: toUnixPath(moodHook) }],
   });
 
-  ok("Hooks registered: PostToolUse (Bash + Write/Edit) + Stop + UserPromptSubmit (name + mood)");
+  ok("Hooks registered: PostToolUse (Bash + Write/Edit) + Stop (comment + suggest) + UserPromptSubmit (name + mood)");
 }
 
 // ─── Step 5: Ensure MCP tools are allowed ───────────────────────────────────

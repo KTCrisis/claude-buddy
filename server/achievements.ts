@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join } from "path";
 import { buddyStateDir } from "./path.ts";
+import { awardXp } from "./xp.ts";
 
 const STATE_DIR = buddyStateDir();
 const EVENTS_FILE = join(STATE_DIR, "events.json");
@@ -72,6 +73,7 @@ export interface GlobalCounters {
   holiday_sessions: number;
   spooky_sessions: number;
   april_fools_errors: number;
+  bugs_resolved: number;
 }
 
 export interface SlotCounters {
@@ -100,6 +102,7 @@ export const GLOBAL_KEYS: (keyof GlobalCounters)[] = [
   "late_night_commits", "friday_pushes", "marathon_errors", "weekend_conflicts",
   "recoveries", "marathon_recoveries", "max_error_streak",
   "holiday_sessions", "spooky_sessions", "april_fools_errors",
+  "bugs_resolved",
 ];
 
 export const SLOT_KEYS: (keyof SlotCounters)[] = [
@@ -128,6 +131,7 @@ const EMPTY_GLOBAL: GlobalCounters = {
   late_night_commits: 0, friday_pushes: 0, marathon_errors: 0, weekend_conflicts: 0,
   recoveries: 0, marathon_recoveries: 0, max_error_streak: 0,
   holiday_sessions: 0, spooky_sessions: 0, april_fools_errors: 0,
+  bugs_resolved: 0,
 };
 
 const EMPTY_SLOT: SlotCounters = {
@@ -1261,6 +1265,14 @@ export const ACHIEVEMENTS: Achievement[] = [
     secret: false,
   },
   {
+    id: "bug_squasher",
+    name: "Bug Squasher",
+    description: "Resolve a remembered bug from memory",
+    icon: "\ud83d\udc1f",
+    check: (e) => e.bugs_resolved >= 1,
+    secret: false,
+  },
+  {
     id: "completionist",
     name: "Completionist",
     description: "Unlock every other achievement",
@@ -1305,6 +1317,9 @@ export function checkAndAward(slot?: string): Achievement[] {
 
   if (newlyUnlocked.length > 0) {
     saveUnlocked(unlocked);
+    for (const ach of newlyUnlocked) {
+      awardXp("achievement_unlocked", slot);
+    }
   }
 
   const global = loadGlobalEvents();

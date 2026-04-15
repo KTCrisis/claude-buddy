@@ -53,7 +53,80 @@ If any of these feel unclear, the sections below explain them step by step.
 4. Open a PR
 
 ### New Species Art
-Species art lives in `server/art.ts` and `statusline/buddy-status.sh`. Each species has 3 animation frames of 4-5 lines, ~12 chars wide. Use `{E}` as the eye placeholder.
+
+Species art lives in two files that must be kept in sync:
+- `server/art.ts` — TypeScript source of truth
+- `statusline/buddy-status.sh` — bash copy for the status line
+
+#### Art Format Specification
+
+Each species requires **3 animation frames**, each **exactly 5 lines** tall and **max 14 characters** wide.
+
+```
+Frame 0 (idle A) — 5 lines
+Frame 1 (idle B) — 5 lines
+Frame 2 (idle C) — 5 lines
+```
+
+Use `{E}` as the eye character placeholder — it is replaced at render time with the buddy's actual eye (`·`, `✦`, `×`, `◉`, `@`, `°`).
+
+**Rules:**
+- No ANSI escape codes (no `\x1b[`, no `\033[`)
+- Each line must be ≤ 14 display characters wide
+- At least one `{E}` placeholder per frame (recommended on line 2)
+- ASCII art only — no emoji in the art itself (emoji in reactions is fine)
+- Keep it readable at 14 chars wide — test with `bun run show`
+
+**Example (cat species, simplified):**
+```typescript
+cat: [
+  // Frame 0
+  ["            ", "   /\\_/\\    ", "  ( {E}   {E})  ", "  (  ω  )   ", "  (\")_(\")   "],
+  // Frame 1
+  ["            ", "   /\\_/\\    ", "  ( {E}   {E})  ", "  (  ω  )   ", "  (\")_(\")~  "],
+  // Frame 2
+  ["            ", "   /\\-/\\    ", "  ( {E}   {E})  ", "  (  ω  )   ", "  (\")_(\")   "],
+],
+```
+
+The bash status line (`statusline/buddy-status.sh`) uses a different format — 4 lines per frame with a separate face line. When adding a new species, both files must be updated.
+
+#### Validating Your Art
+
+Before submitting a PR, validate your art format:
+
+```bash
+# Validate a species JSON file
+bun run cli/validate-species.ts ./my-species.json
+
+# Or validate inline — import validateSpeciesFile() in your test
+```
+
+The validator checks:
+- Exactly 3 frames × 5 lines
+- No ANSI escape codes
+- Display width ≤ 14 chars per line
+- `{E}` eye placeholder present
+
+#### Submission Process
+
+1. Fork the repo and create a branch (`feat/species-<name>`)
+2. Add the species to `SPECIES` array in `server/engine.ts`
+3. Add art to `SPECIES_ART` in `server/art.ts`
+4. Add bash art to the `case "$SPECIES" in` block in `statusline/buddy-status.sh`
+5. Add species-specific reactions to `SPECIES_REACTIONS` in `server/reactions.ts` (optional)
+6. Run `bun run cli/validate-species.ts` on your art
+7. Run `bun test` to ensure all tests pass
+8. Open a PR with the species name and art preview
+
+The PR description should include:
+- Species name and one-line description
+- Why this species fits the buddy universe
+- A text preview of the 3 animation frames
+
+#### Community Species Registry (Future)
+
+Longer term, community species may be stored in `~/.claude-buddy/species/` as JSON files, loaded at runtime. This would allow species to be shared without a code PR. This is planned for a future release.
 
 > **Note on tests:** Adding a new species changes the deterministic generation output (golden snapshot tests will fail because the species array length affects modulo distribution). Don't worry about fixing these yourself — the maintainers will update the golden snapshots when merging. This will be automated in a future update.
 

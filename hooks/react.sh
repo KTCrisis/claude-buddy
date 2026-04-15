@@ -1314,13 +1314,14 @@ if [ -n "$REASON" ] && [ -n "$REACTION" ]; then
     jq --arg r "$REACTION" '.reaction = $r' "$STATUS_FILE" > "$TMP" 2>/dev/null && mv "$TMP" "$STATUS_FILE"
 
     if command -v jq >/dev/null 2>&1; then
+        XP_EVENT=""
         if [ ! -f "$EVENTS_FILE" ]; then
             echo '{}' > "$EVENTS_FILE"
         fi
         case "$REASON" in
-            "test-fail")      KEY="tests_failed" ;;
-            "error")          KEY="errors_seen" ;;
-            "large-diff")     KEY="large_diffs" ;;
+            "test-fail")      KEY="tests_failed"; XP_EVENT="tests_failed" ;;
+            "error")          KEY="errors_seen"; XP_EVENT="errors_spotted" ;;
+            "large-diff")     KEY="large_diffs"; XP_EVENT="large_diff" ;;
             "commit")         KEY="commits_made" ;;
             "push")           KEY="pushes_made" ;;
             "merge-conflict") KEY="conflicts_resolved" ;;
@@ -1343,6 +1344,23 @@ if [ -n "$REASON" ] && [ -n "$REACTION" ]; then
         if [ -n "$KEY" ]; then
             TMP=$(mktemp)
             jq --arg k "$KEY" 'if .[$k] then .[$k] += 1 else .[$k] = 1 end' "$EVENTS_FILE" > "$TMP" 2>/dev/null && mv "$TMP" "$EVENTS_FILE"
+        fi
+        # Award XP for core coding events.
+        if [ -n "$XP_EVENT" ] && [ -x "$(command -v bun)" ]; then
+            PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+            bun run "$PLUGIN_ROOT/server/award-xp.ts" "$XP_EVENT" >/dev/null 2>&1 &
+        fi
+        # Shift mood based on the event.
+        if [ -x "$(command -v bun)" ]; then
+            PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+            case "$REASON" in
+                "test-fail")  MOOD_TRIGGER="tests_fail" ;;
+                "error")      MOOD_TRIGGER="error" ;;
+                "large-diff") MOOD_TRIGGER="large_diff" ;;
+                "success")    MOOD_TRIGGER="tests_pass" ;;
+                *)            MOOD_TRIGGER="" ;;
+            esac
+            [ -n "$MOOD_TRIGGER" ] && bun run "$PLUGIN_ROOT/server/shift-mood.ts" "$MOOD_TRIGGER" >/dev/null 2>&1 &
         fi
     fi
 fi

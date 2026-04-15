@@ -7,6 +7,7 @@
  */
 
 import type { Species, Eye, Hat, Rarity, StatName, BuddyBones } from "./engine.ts";
+import { getRarityColor } from "./theme.ts";
 
 // ─── Species art: 3 frames × 5 lines each ──────────────────────────────────
 
@@ -120,7 +121,12 @@ export const SPECIES_ART: Record<Species, string[][]> = {
      " \\ } { /",
      " ≈(° °)≈",
      "   'v'"],
-  ]
+  ],
+  pikachu: [
+    ["            ", "   /\\_/\\   ", "  ({E} {E})  ", "   (  ω )   ", "   (__)    "],
+    ["            ", "   /\\_/\\   ", "   (- -)   ", "   (  ω )   ", "   (__)    "],
+    ["            ", "   /\\_/\\   ", "  ({E} {E})  ", "   (  ~ )   ", "   (__)    "],
+  ],
 };
 
 // ─── Hat art ────────────────────────────────────────────────────────────────
@@ -157,16 +163,6 @@ function applyHat(species: Species, hat: Hat, art: string[]): void {
     art[0] = HAT_ART[hat];
   }
 }
-
-// ─── Rarity ANSI colors ────────────────────────────────────────────────────
-
-const RARITY_COLOR: Record<Rarity, string> = {
-  common:    "\x1b[38;2;153;153;153m",  // inactive   rgb(153,153,153)
-  uncommon:  "\x1b[38;2;78;186;101m",   // success    rgb(78,186,101)
-  rare:      "\x1b[38;2;177;185;249m",  // permission rgb(177,185,249)
-  epic:      "\x1b[38;2;175;135;255m",  // autoAccept rgb(175,135,255)
-  legendary: "\x1b[38;2;255;193;7m",    // warning    rgb(255,193,7)
-};
 
 const SHINY_COLOR = "\x1b[93m"; // bright yellow
 const BOLD = "\x1b[1m";
@@ -281,7 +277,7 @@ export function renderCompanionCard(
   frame: number = 0,
   width: number = 40,
 ): string {
-  const color = RARITY_COLOR[bones.rarity];
+  const color = getRarityColor(bones.rarity);
   const stars = RARITY_STARS[bones.rarity];
   const shiny = bones.shiny ? `${SHINY_COLOR}\u2728 ${NC}` : "";
   const art = getArtFrame(bones.species, bones.eye, frame);
@@ -456,7 +452,7 @@ export function renderStatusLine(
   reaction?: string,
 ): string {
   const face = SPECIES_ART[bones.species][0][2]?.replace(/\{E\}/g, bones.eye).trim() || "(?)";
-  const color = RARITY_COLOR[bones.rarity];
+  const color = getRarityColor(bones.rarity);
   const stars = RARITY_STARS[bones.rarity];
   const shiny = bones.shiny ? "\u2728" : "";
   const msg = reaction ? ` \u2502 "${reaction}"` : "";

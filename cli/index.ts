@@ -13,6 +13,8 @@
  *   npx claude-buddy verify       Verify what buddy your ID produces
  */
 
+export {}; // Make this file a module for TypeScript top-level await
+
 const args = process.argv.slice(2);
 const command = args[0] || "install";
 

@@ -23,7 +23,7 @@ import {
   type Rarity,
   type StatName,
   type Companion,
-} from "./engine.ts";
+} from "./engine";
 import {
   loadCompanion,
   saveCompanion,
@@ -44,20 +44,48 @@ import {
   setBuddyStatusLine,
   unsetBuddyStatusLine,
   cleanupPluginState,
-} from "./state.ts";
+} from "./state";
 import {
   buddyStateDir,
   claudeConfigDir,
   claudeSettingsPath,
-} from "./path.ts";
+} from "./path";
 import {
   getReaction, generatePersonalityPrompt,
-} from "./reactions.ts";
-import { renderCompanionCardMarkdown } from "./art.ts";
+} from "./reactions";
+import { renderCompanionCardMarkdown } from "./art";
 import {
   incrementEvent, checkAndAward, trackActiveDay,
   renderAchievementsCardMarkdown,
-} from "./achievements.ts";
+} from "./achievements";
+import { getTheme } from "./theme";
+import {
+  awardXp,
+  getXpState,
+  clearLevelUpFlag,
+  renderXpCardMarkdown,
+  UNLOCKABLE_UPGRADES,
+  isUpgradeUnlocked,
+  applyUpgrade,
+  MAX_LEVEL,
+  computeLevel,
+} from "./xp";
+import {
+  getMood,
+  shiftMood,
+  MOOD_NAMES,
+  MOOD_COLORS,
+  type Mood,
+} from "./mood";
+import {
+  queryMemory,
+  resolveBug as resolveBugMemory,
+  type MemoryQuery,
+} from "./memory";
+import {
+  pickSuggestion,
+  type PatternType,
+} from "./suggestions";
 
 function getInstructions(): string {
   const companion = loadCompanion();
@@ -72,6 +100,15 @@ function getInstructions(): string {
     `NAME REACTIONS: When the user's message contains "${companion.name}", call buddy_react immediately`,
     `with a short in-character response (surprise, recognition, dry wit — fits the personality).`,
     `Display the tool result verbatim. This is the only time to call buddy_react proactively.`,
+    ``,
+    `PAIR-PROGRAMMING: When you notice a teachable moment in the code, call buddy_suggest.`,
+    `Patterns to watch for:`,
+    `- Repeated errors (same error 3+ times) → "That error keeps showing up."`,
+    `- Large diffs (>150 lines) → "Maybe split that up?"`,
+    `- TODO/FIXME comments in code → "Don't forget to actually do it."`,
+    `- Long functions (>50 lines) → "Consider breaking that up."`,
+    `- Same variable renamed multiple times → "Update all the references too."`,
+    `Only suggest when you have something specific and actionable to say. Don't be annoying.`,
     ``,
     `END-OF-TURN: At the very end of EVERY response, append an invisible HTML comment:`,
     `<!-- buddy: [reaction here] -->`,
@@ -182,6 +219,7 @@ server.tool(
     saveReaction(reaction, "pet");
     writeStatusState(companion, reaction);
     incrementEvent("pets", 1, activeSlot());
+    awardXp("buddy_pet", activeSlot(), companion.bones.species, companion.bones.rarity);
 
     const face = renderFace(companion.bones.species, companion.bones.eye);
     const newAch = checkAndAward(activeSlot());
@@ -356,6 +394,8 @@ server.tool(
       "  /buddy rename     Rename companion (1-14 chars)",
       "  /buddy personality  Set custom personality text",
       "  /buddy achievements  Show achievement badges",
+      "  /buddy xp         Show XP, level, and unlocked reactions/upgrades",
+      "  /buddy upgrades    List and apply level-up upgrades",
       "  /buddy summon     Summon a saved buddy (omit slot for random)",
       "  /buddy save       Save current buddy to a named slot",
       "  /buddy list       List all saved buddies",
@@ -369,6 +409,7 @@ server.tool(
       "  /buddy margin     Set right-side margin in chars (0-20, tmux only)",
       "  /buddy rainbow    Show or set shiny gradient colors (hex, e.g. #ff0000)",
       "  /buddy statusline Enable or disable buddy in the status line",
+      "  /buddy theme     Set color theme: dark (bright) or light (dark colors)",
       "",
       "CLI:",
       "  bun run help            Show full CLI help",
@@ -501,6 +542,39 @@ server.tool(
         {
           type: "text",
           text: `Updated: style=${cfg.bubbleStyle}, position=${cfg.bubblePosition}, showRarity=${cfg.showRarity}, width=${cfg.bubbleWidth}, margin=${cfg.bubbleMargin}, rainbow=${rainbowDisplay}\nRestart Claude Code for changes to take effect.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "buddy_theme",
+  "Set buddy's color theme. dark = bright colors for dark terminal backgrounds; light = dark colors for light backgrounds; auto = follow system (currently falls back to dark).",
+  {
+    theme: z
+      .enum(["dark", "light", "auto"])
+      .optional()
+      .describe("Theme: dark, light, or auto"),
+  },
+  async ({ theme }) => {
+    if (theme === undefined) {
+      const cfg = loadConfig();
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Theme: ${cfg.theme ?? "auto"}\nUse /buddy theme <dark|light|auto> to change.`,
+          },
+        ],
+      };
+    }
+    const cfg = saveConfig({ theme });
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Theme set to ${cfg.theme}. Restart Claude Code to apply.`,
         },
       ],
     };
@@ -679,6 +753,226 @@ server.tool(
     incrementEvent("achievement_views", 1);
     const card = renderAchievementsCardMarkdown();
     return { content: [{ type: "text", text: card }] };
+  },
+);
+
+// ─── Tool: buddy_xp ──────────────────────────────────────────────────────────
+
+server.tool(
+  "buddy_xp",
+  "Show your companion's XP, level, and unlocked reactions and upgrades.",
+  {},
+  async () => {
+    ensureCompanion();
+    const card = renderXpCardMarkdown();
+    return { content: [{ type: "text", text: card }] };
+  },
+);
+
+// ─── Tool: buddy_upgrades ─────────────────────────────────────────────────────
+
+server.tool(
+  "buddy_upgrades",
+  "List and apply upgrades unlocked by leveling up. Shows available upgrades, their level requirements, and applies them to your companion.",
+  {
+    apply: z.string().optional().describe("Upgrade ID to apply (e.g. 'bonus_eye', 'shiny_aura')"),
+  },
+  async ({ apply }) => {
+    ensureCompanion();
+    const state = getXpState();
+
+    if (apply) {
+      if (!isUpgradeUnlocked(apply)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Upgrade "${apply}" is not yet unlocked. Reach the required level first.`,
+            },
+          ],
+        };
+      }
+      const companion = loadCompanion();
+      if (!companion) {
+        return { content: [{ type: "text", text: "No active companion." }] };
+      }
+      const updated = applyUpgrade(companion, apply);
+      if (updated) {
+        saveCompanion(updated);
+        const upg = UNLOCKABLE_UPGRADES.find((u) => u.id === apply);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${upg?.icon ?? ""} Applied: ${upg?.name}. ${upg?.description ?? ""}`,
+            },
+          ],
+        };
+      }
+    }
+
+    // No apply specified — list all upgrades with unlock status
+    const currentLevel = state.level;
+    const lines: string[] = [];
+    lines.push(`### Level ${currentLevel} \u2014 Upgrades`);
+    lines.push("");
+    for (const upg of UNLOCKABLE_UPGRADES) {
+      const unlocked = currentLevel >= upg.level;
+      const status = unlocked ? "\u2705" : `\u{1F512} Lvl ${upg.level}`;
+      lines.push(`${status} ${upg.icon} **${upg.name}**: ${upg.description}`);
+    }
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+// ─── Tool: buddy_suggest ────────────────────────────────────────────────────
+
+server.tool(
+  "buddy_suggest",
+  "Called proactively by the buddy when it detects a teachable moment in your code. Do NOT call this unprompted — the Stop hook handles pattern detection automatically. This tool is only for buddy-initiated suggestions when YOU notice a pattern.",
+  {
+    pattern: z.enum([
+      "repeated_error",
+      "escalated_large_diff",
+      "new_file_no_test",
+      "sequence_rename",
+      "no_tests_long_session",
+      "long_function",
+      "todo_comment",
+    ] as const).optional().describe("The pattern type detected"),
+    context: z.string().optional().describe("Brief context about what triggered this suggestion"),
+  },
+  async ({ pattern, context }) => {
+    // If no pattern specified, generate a general suggestion
+    if (!pattern) {
+      const companion = ensureCompanion();
+      const generalSuggestions: string[] = [
+        "Remember to write tests for new functions.",
+        "That error might be a sign of a deeper issue.",
+        "Consider breaking up that long function.",
+        "Good variable names pay off later.",
+      ];
+      const msg = generalSuggestions[Math.floor(Math.random() * generalSuggestions.length)];
+      return { content: [{ type: "text", text: msg }] };
+    }
+
+    const suggestion = pickSuggestion(pattern);
+    const message = context ? `${suggestion.message} (${context})` : suggestion.message;
+    return { content: [{ type: "text", text: message }] };
+  },
+);
+
+// ─── Tool: buddy_memory ─────────────────────────────────────────────────────
+
+server.tool(
+  "buddy_memory",
+  "Query and manage buddy's cross-session memory — remembered projects, bugs, and preferences.",
+  {
+    project: z.string().optional().describe("Filter by project name"),
+    type: z.enum(["projects", "bugs", "preferences", "all"]).optional().describe("Type of memory to query (default: all)"),
+    resolved: z.boolean().optional().describe("For bugs: filter by resolved status"),
+    resolveBug: z.string().optional().describe("Bug ID to mark as resolved"),
+  },
+  async ({ project, type, resolved, resolveBug }) => {
+    // Handle bug resolution
+    if (resolveBug) {
+      const bug = resolveBugMemory(resolveBug);
+      if (!bug) {
+        return { content: [{ type: "text", text: `Bug "${resolveBug}" not found.` }] };
+      }
+      incrementEvent("bugs_resolved", 1, activeSlot());
+      checkAndAward(activeSlot());
+      return {
+        content: [{
+          type: "text",
+          text: `Bug marked as resolved: ${bug.summary.slice(0, 100)}`,
+        }],
+      };
+    }
+
+    // Query memory
+    const result = queryMemory({ project, type, resolved });
+    const lines: string[] = [];
+
+    if (result.projects.length > 0) {
+      lines.push("### Projects");
+      lines.push("");
+      for (const proj of result.projects) {
+        lines.push(`**${proj.name}** (${proj.language.join(", ") || "unknown"})`);
+        if (proj.framework) lines.push(`  Framework: ${proj.framework}`);
+        lines.push(`  Last seen: ${new Date(proj.lastSeen).toLocaleDateString()}`);
+        lines.push("");
+      }
+    }
+
+    if (result.bugs.length > 0) {
+      lines.push("### Bugs");
+      lines.push("");
+      for (const bug of result.bugs) {
+        const status = bug.resolved ? "\u2705" : "\u274c";
+        lines.push(`${status} **${bug.summary.slice(0, 80)}...**`);
+        lines.push(`  Occurrences: ${bug.occurrenceCount} | First seen: ${new Date(bug.firstSeen).toLocaleDateString()}`);
+        lines.push(`  ID: \`${bug.id}\``);
+        lines.push("");
+      }
+    }
+
+    if (result.preferences.length > 0) {
+      lines.push("### Preferences");
+      lines.push("");
+      for (const pref of result.preferences) {
+        lines.push(`**${pref.key}** = "${pref.value}" (${Math.round(pref.confidence * 100)}% confidence)`);
+        lines.push(`  Context: ${pref.context}`);
+        lines.push("");
+      }
+    }
+
+    if (lines.length === 0) {
+      lines.push("No memory yet. Start coding and buddy will remember your projects, bugs, and preferences.");
+    }
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+// ─── Tool: buddy_mood ────────────────────────────────────────────────────────
+
+server.tool(
+  "buddy_mood",
+  "Show your buddy's current mood and what influences it. Mood shifts based on coding events, test results, and time of day.",
+  {},
+  async () => {
+    const moodState = getMood();
+    const mood = moodState.current;
+    const color = MOOD_COLORS[mood] ?? "\ud83d\udcab";
+    const name = MOOD_NAMES[mood] ?? mood;
+
+    const cfg = loadConfig();
+    const lines: string[] = [];
+    lines.push(`### ${color} ${name}`);
+    lines.push("");
+    lines.push(`**Current mood:** ${name}`);
+    lines.push(`**Intensity:** ${moodState.intensity}/3`);
+    lines.push("");
+
+    // Show recent activity that affects mood
+    if (moodState.recentErrors > 0) {
+      lines.push(`Recent errors: ${moodState.recentErrors}`);
+    }
+    if (moodState.recentTests > 0) {
+      lines.push(`Recent tests passed: ${moodState.recentTests}`);
+    }
+    if (moodState.recentDiffs > 0) {
+      lines.push(`Recent large diffs: ${moodState.recentDiffs}`);
+    }
+
+    lines.push("");
+    lines.push("Mood shifts based on: tests, errors, session length, and time of day.");
+    if (!cfg.moodEnabled) {
+      lines.push("\n*(Mood is currently disabled)*");
+    }
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
   },
 );
 
@@ -967,6 +1261,24 @@ server.resource(
           text: JSON.stringify(companion, null, 2),
         },
       ],
+    };
+  },
+);
+
+// ─── Resource: buddy://memory ───────────────────────────────────────────────
+
+server.resource(
+  "buddy_memory",
+  "buddy://memory",
+  { description: "Buddy's memory about your projects, bugs, and preferences", mimeType: "application/json" },
+  async () => {
+    const result = queryMemory({});
+    return {
+      contents: [{
+        uri: "buddy://memory",
+        mimeType: "application/json",
+        text: JSON.stringify(result, null, 2),
+      }],
     };
   },
 );
