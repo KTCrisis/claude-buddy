@@ -37,7 +37,13 @@ ACHIEVEMENT=$(jq -r '.achievement // ""' "$STATE" 2>/dev/null)
 # eye is written to status.json by writeStatusState (v2+); fall back to "°"
 E=$(jq -r '.eye // "°"' "$STATE" 2>/dev/null)
 
-cat > /dev/null  # drain stdin
+# ─── Parse session metrics from stdin (JSON piped by Claude Code) ────────────
+STDIN_JSON=$(cat)
+SESSION_MODEL=$(echo "$STDIN_JSON" | jq -r '.model.display_name // ""' 2>/dev/null)
+SESSION_COST=$(echo "$STDIN_JSON" | jq -r '.cost.total_cost_usd // 0' 2>/dev/null)
+CTX_TOKENS=$(echo "$STDIN_JSON" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null)
+CTX_MAX=$(echo "$STDIN_JSON" | jq -r '.context_window.context_window_size // 0' 2>/dev/null)
+CTX_PCT=$(echo "$STDIN_JSON" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
 
 # ─── Animation: frame from timestamp ─────────────────────────────────────────
 # Original sequence: [0,0,0,0,1,0,0,0,-1,0,0,2,0,0,0] with 500ms ticks
@@ -404,5 +410,43 @@ for (( i=0; i<ART_COUNT; i++ )); do
         echo "${SPACER}${art_part}"
     fi
 done
+
+# ─── Session metrics line (tokens · cost · model) ───────────────────────────
+if [ -n "$SESSION_MODEL" ] && [ "$SESSION_MODEL" != "" ] && [ "$SESSION_MODEL" != "null" ]; then
+    # Format tokens: 45231 → 45k
+    if [ "${CTX_TOKENS:-0}" -ge 1000 ] 2>/dev/null; then
+        CTX_DISPLAY="$(( CTX_TOKENS / 1000 ))k"
+    else
+        CTX_DISPLAY="${CTX_TOKENS:-0}"
+    fi
+    if [ "${CTX_MAX:-0}" -ge 1000 ] 2>/dev/null; then
+        CTX_MAX_DISPLAY="$(( CTX_MAX / 1000 ))k"
+    else
+        CTX_MAX_DISPLAY="${CTX_MAX:-0}"
+    fi
+
+    # Color context % based on usage
+    if [ "${CTX_PCT:-0}" -ge 80 ] 2>/dev/null; then
+        CTX_COLOR=$'\033[38;2;255;85;85m'   # red
+    elif [ "${CTX_PCT:-0}" -ge 50 ] 2>/dev/null; then
+        CTX_COLOR=$'\033[38;2;255;193;7m'   # gold
+    else
+        CTX_COLOR=$'\033[38;2;78;186;101m'  # green
+    fi
+
+    # Format cost
+    COST_DISPLAY=$(printf '$%.2f' "${SESSION_COST:-0}")
+
+    METRICS="${DIM}ctx ${NC}${CTX_COLOR}${CTX_DISPLAY}/${CTX_MAX_DISPLAY}${NC}${DIM} · ${NC}${DIM}${COST_DISPLAY}${NC}${DIM} · ${NC}${DIM}${SESSION_MODEL}${NC}"
+
+    # Right-align under the art
+    METRICS_RAW="ctx ${CTX_DISPLAY}/${CTX_MAX_DISPLAY} · ${COST_DISPLAY} · ${SESSION_MODEL}"
+    METRICS_LEN=${#METRICS_RAW}
+    METRICS_PAD=$(( COLS - METRICS_LEN - MARGIN ))
+    [ "$METRICS_PAD" -lt 0 ] && METRICS_PAD=0
+    METRICS_SPACER=$(printf "${B}%${METRICS_PAD}s" "")
+
+    echo "${METRICS_SPACER}${METRICS}"
+fi
 
 exit 0
