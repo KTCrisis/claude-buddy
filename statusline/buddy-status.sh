@@ -31,8 +31,11 @@ MUTED=$(jq -r '.muted // false' "$STATE" 2>/dev/null)
 NAME=$(jq -r '.name // ""' "$STATE" 2>/dev/null)
 [ -z "$NAME" ] && exit 0
 
+SPECIES=$(jq -r '.species // ""' "$STATE" 2>/dev/null)
 RARITY=$(jq -r '.rarity // "common"' "$STATE" 2>/dev/null)
 SHINY=$(jq -r '.shiny // false' "$STATE" 2>/dev/null)
+HAT=$(jq -r '.hat // "none"' "$STATE" 2>/dev/null)
+E=$(jq -r '.eye // "°"' "$STATE" 2>/dev/null)
 REACTION=$(jq -r '.reaction // ""' "$STATE" 2>/dev/null)
 ACHIEVEMENT=$(jq -r '.achievement // ""' "$STATE" 2>/dev/null)
 
@@ -44,24 +47,161 @@ CTX_TOKENS=$(echo "$STDIN_JSON" | jq -r '.context_window.total_input_tokens // 0
 CTX_MAX=$(echo "$STDIN_JSON" | jq -r '.context_window.context_window_size // 0' 2>/dev/null)
 CTX_PCT=$(echo "$STDIN_JSON" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
 
-# ─── Animation: pick current frame from server-rendered frames ──────────────
+# ─── Animation: prefer server-rendered frames, fall back to inline species art
 NOW=${BUDDY_FAKE_NOW:-$(date +%s)}
 FRAME_BODY=$(jq -r --argjson now "$NOW" '
     .frameSequence[$now % (.frameSequence | length)] as $idx
     | .frames[$idx] // ""
 ' "$STATE" 2>/dev/null)
 
-# Fallback when status.json lacks .frames — e.g. server/bash version skew
-# during install or while the MCP server hasn't rewritten the file yet. Keep
-# the buddy visible in a degraded form instead of emitting an empty block.
-if [ -z "$FRAME_BODY" ]; then
-    FRAME_BODY=$'            \n    (°°)    \n    (  )    \n            \n            '
-fi
+if [ -n "$FRAME_BODY" ]; then
+    ART_LINES=()
+    while IFS= read -r line; do
+        ART_LINES+=("$line")
+    done <<< "$FRAME_BODY"
+else
+    # Inline species art when server hasn't written .frames to status.json
+    SEQ=(0 0 0 0 1 0 0 0 -1 0 0 2 0 0 0)
+    FRAME_IDX=$(( NOW % ${#SEQ[@]} ))
+    FRAME=${SEQ[$FRAME_IDX]}
+    BLINK=0
+    if [ "$FRAME" -eq -1 ]; then BLINK=1; FRAME=0; fi
 
-ART_LINES=()
-while IFS= read -r line; do
-    ART_LINES+=("$line")
-done <<< "$FRAME_BODY"
+    case "$SPECIES" in
+      duck)
+        case $FRAME in
+          0) L1="   __";      L2=" <(${E} )___"; L3="  (  ._>";   L4="   \`--'" ;;
+          1) L1="   __";      L2=" <(${E} )___"; L3="  (  ._>";   L4="   \`--'~" ;;
+          2) L1="   __";      L2=" <(${E} )___"; L3="  (  .__>";  L4="   \`--'" ;;
+        esac ;;
+      goose)
+        case $FRAME in
+          0) L1="  (${E}>";    L2="   ||";       L3=" _(__)_";   L4="  ^^^^" ;;
+          1) L1=" (${E}>";     L2="   ||";       L3=" _(__)_";   L4="  ^^^^" ;;
+          2) L1="  (${E}>>";   L2="   ||";       L3=" _(__)_";   L4="  ^^^^" ;;
+        esac ;;
+      blob)
+        case $FRAME in
+          0) L1=" .----.";    L2="( ${E}  ${E} )"; L3="(      )";  L4=" \`----'" ;;
+          1) L1=".------.";   L2="( ${E}  ${E} )"; L3="(       )"; L4="\`------'" ;;
+          2) L1="  .--.";     L2=" (${E}  ${E})";  L3=" (    )";   L4="  \`--'" ;;
+        esac ;;
+      cat)
+        case $FRAME in
+          0) L1=" /\\_/\\";   L2="( ${E}   ${E})"; L3="(  ω  )";  L4="(\")_(\")" ;;
+          1) L1=" /\\_/\\";   L2="( ${E}   ${E})"; L3="(  ω  )";  L4="(\")_(\")~" ;;
+          2) L1=" /\\-/\\";   L2="( ${E}   ${E})"; L3="(  ω  )";  L4="(\")_(\")" ;;
+        esac ;;
+      dragon)
+        case $FRAME in
+          0) L1="/^\\  /^\\"; L2="< ${E}  ${E} >"; L3="(  ~~  )"; L4=" \`-vvvv-'" ;;
+          1) L1="/^\\  /^\\"; L2="< ${E}  ${E} >"; L3="(      )"; L4=" \`-vvvv-'" ;;
+          2) L1="/^\\  /^\\"; L2="< ${E}  ${E} >"; L3="(  ~~  )"; L4=" \`-vvvv-'" ;;
+        esac ;;
+      octopus)
+        case $FRAME in
+          0) L1=" .----.";   L2="( ${E}  ${E} )"; L3="(______)"; L4="/\\/\\/\\/\\" ;;
+          1) L1=" .----.";   L2="( ${E}  ${E} )"; L3="(______)"; L4="\\/\\/\\/\\/" ;;
+          2) L1=" .----.";   L2="( ${E}  ${E} )"; L3="(______)"; L4="/\\/\\/\\/\\" ;;
+        esac ;;
+      owl)
+        case $FRAME in
+          0) L1=" /\\  /\\";  L2="((${E})(${E}))"; L3="(  ><  )"; L4=" \`----'" ;;
+          1) L1=" /\\  /\\";  L2="((${E})(${E}))"; L3="(  ><  )"; L4=" .----." ;;
+          2) L1=" /\\  /\\";  L2="((${E})(-))";    L3="(  ><  )"; L4=" \`----'" ;;
+        esac ;;
+      penguin)
+        case $FRAME in
+          0) L1=" .---.";    L2=" (${E}>${E})";   L3="/(   )\\"; L4=" \`---'" ;;
+          1) L1=" .---.";    L2=" (${E}>${E})";   L3="|(   )|";  L4=" \`---'" ;;
+          2) L1=" .---.";    L2=" (${E}>${E})";   L3="/(   )\\"; L4=" \`---'" ;;
+        esac ;;
+      turtle)
+        case $FRAME in
+          0) L1=" _,--._";   L2="( ${E}  ${E} )"; L3="[______]"; L4="\`\`    \`\`" ;;
+          1) L1=" _,--._";   L2="( ${E}  ${E} )"; L3="[______]"; L4=" \`\`  \`\`" ;;
+          2) L1=" _,--._";   L2="( ${E}  ${E} )"; L3="[======]"; L4="\`\`    \`\`" ;;
+        esac ;;
+      snail)
+        case $FRAME in
+          0) L1="${E}   .--."; L2="\\  ( @ )";   L3=" \\_\`--'"; L4="~~~~~~~" ;;
+          1) L1=" ${E}  .--."; L2="|  ( @ )";   L3=" \\_\`--'"; L4="~~~~~~~" ;;
+          2) L1="${E}   .--."; L2="\\  ( @ )";   L3=" \\_\`--'"; L4=" ~~~~~~" ;;
+        esac ;;
+      ghost)
+        case $FRAME in
+          0) L1=" .----.";   L2="/ ${E}  ${E} \\"; L3="|      |"; L4="~\`~\`\`~\`~" ;;
+          1) L1=" .----.";   L2="/ ${E}  ${E} \\"; L3="|      |"; L4="\`~\`~~\`~\`" ;;
+          2) L1=" .----.";   L2="/ ${E}  ${E} \\"; L3="|      |"; L4="~~\`~~\`~~" ;;
+        esac ;;
+      axolotl)
+        case $FRAME in
+          0) L1="}~(____)~{"; L2="}~(${E}..${E})~{"; L3=" (.--.)";  L4=" (_/\\_)" ;;
+          1) L1="~}(____){~"; L2="~}(${E}..${E}){~"; L3=" (.--.)";  L4=" (_/\\_)" ;;
+          2) L1="}~(____)~{"; L2="}~(${E}..${E})~{"; L3=" ( -- )";  L4=" ~_/\\_~" ;;
+        esac ;;
+      capybara)
+        case $FRAME in
+          0) L1="n______n";  L2="( ${E}    ${E} )"; L3="(  oo  )"; L4="\`------'" ;;
+          1) L1="n______n";  L2="( ${E}    ${E} )"; L3="(  Oo  )"; L4="\`------'" ;;
+          2) L1="u______n";  L2="( ${E}    ${E} )"; L3="(  oo  )"; L4="\`------'" ;;
+        esac ;;
+      cactus)
+        case $FRAME in
+          0) L1="n ____ n";  L2="||${E}  ${E}||"; L3="|_|  |_|"; L4="  |  |" ;;
+          1) L1="  ____";    L2="n|${E}  ${E}|n"; L3="|_|  |_|"; L4="  |  |" ;;
+          2) L1="n ____ n";  L2="||${E}  ${E}||"; L3="|_|  |_|"; L4="  |  |" ;;
+        esac ;;
+      robot)
+        case $FRAME in
+          0) L1=" .[||].";   L2="[ ${E}  ${E} ]"; L3="[ ==== ]"; L4="\`------'" ;;
+          1) L1=" .[||].";   L2="[ ${E}  ${E} ]"; L3="[ -==- ]"; L4="\`------'" ;;
+          2) L1=" .[||].";   L2="[ ${E}  ${E} ]"; L3="[ ==== ]"; L4="\`------'" ;;
+        esac ;;
+      rabbit)
+        case $FRAME in
+          0) L1=" (\\__/)";  L2="( ${E}  ${E} )"; L3="=(  ..  )="; L4="(\")__(\")" ;;
+          1) L1=" (|__/)";   L2="( ${E}  ${E} )"; L3="=(  ..  )="; L4="(\")__(\")" ;;
+          2) L1=" (\\__/)";  L2="( ${E}  ${E} )"; L3="=( .  . )="; L4="(\")__(\")" ;;
+        esac ;;
+      mushroom)
+        case $FRAME in
+          0) L1="-o-OO-o-";  L2="(________)";  L3="  |${E}${E}|"; L4="  |__|" ;;
+          1) L1="-O-oo-O-";  L2="(________)";  L3="  |${E}${E}|"; L4="  |__|" ;;
+          2) L1="-o-OO-o-";  L2="(________)";  L3="  |${E}${E}|"; L4="  |__|" ;;
+        esac ;;
+      chonk)
+        case $FRAME in
+          0) L1="/\\    /\\"; L2="( ${E}    ${E} )"; L3="(  ..  )"; L4="\`------'" ;;
+          1) L1="/\\    /|";  L2="( ${E}    ${E} )"; L3="(  ..  )"; L4="\`------'" ;;
+          2) L1="/\\    /\\"; L2="( ${E}    ${E} )"; L3="(  ..  )"; L4="\`------'~" ;;
+        esac ;;
+      *)
+        L1="(${E}${E})"; L2="(  )"; L3=""; L4="" ;;
+    esac
+
+    # Blink: replace eyes with "-"
+    if [ "$BLINK" -eq 1 ]; then
+        L1="${L1//${E}/-}"; L2="${L2//${E}/-}"; L3="${L3//${E}/-}"; L4="${L4//${E}/-}"
+    fi
+
+    # Hat
+    HAT_LINE=""
+    case "$HAT" in
+      crown)     HAT_LINE=" \\^^^/" ;;
+      tophat)    HAT_LINE=" [___]" ;;
+      propeller) HAT_LINE="  -+-" ;;
+      halo)      HAT_LINE=" (   )" ;;
+      wizard)    HAT_LINE="  /^\\" ;;
+      beanie)    HAT_LINE=" (___)" ;;
+      tinyduck)  HAT_LINE="  ,>" ;;
+    esac
+
+    ART_LINES=()
+    [ -n "$HAT_LINE" ] && ART_LINES+=("$HAT_LINE")
+    ART_LINES+=("$L1" "$L2" "$L3")
+    [ -n "$L4" ] && ART_LINES+=("$L4")
+fi
 
 # ─── Rarity color (pC4 = dark theme, the default) ────────────────────────────
 NC=$'\033[0m'
