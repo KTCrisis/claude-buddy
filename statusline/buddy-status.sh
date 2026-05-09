@@ -46,6 +46,8 @@ SESSION_COST=$(echo "$STDIN_JSON" | jq -r '.cost.total_cost_usd // 0' 2>/dev/nul
 CTX_TOKENS=$(echo "$STDIN_JSON" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null)
 CTX_MAX=$(echo "$STDIN_JSON" | jq -r '.context_window.context_window_size // 0' 2>/dev/null)
 CTX_PCT=$(echo "$STDIN_JSON" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
+EFFORT=$(echo "$STDIN_JSON" | jq -r '.effort.level // ""' 2>/dev/null)
+RATE_5H=$(echo "$STDIN_JSON" | jq -r '.rate_limits.five_hour.used_percentage // ""' 2>/dev/null | cut -d. -f1)
 
 # ─── Animation: prefer server-rendered frames, fall back to inline species art
 NOW=${BUDDY_FAKE_NOW:-$(date +%s)}
@@ -541,10 +543,39 @@ if [ -n "$SESSION_MODEL" ] && [ "$SESSION_MODEL" != "" ] && [ "$SESSION_MODEL" !
     # Format cost
     COST_DISPLAY=$(printf '$%.2f' "${SESSION_COST:-0}")
 
-    METRICS="${DIM}ctx ${NC}${CTX_COLOR}${CTX_DISPLAY}/${CTX_MAX_DISPLAY}${NC}${DIM} · ${NC}${DIM}${COST_DISPLAY}${NC}${DIM} · ${NC}${DIM}${SESSION_MODEL}${NC}"
+    # Effort level (short label)
+    EFFORT_PART=""
+    EFFORT_RAW=""
+    if [ -n "$EFFORT" ] && [ "$EFFORT" != "null" ] && [ "$EFFORT" != "" ]; then
+        case "$EFFORT" in
+          low)    EFF_COLOR=$'\033[38;2;78;186;101m'  ;;  # green
+          medium) EFF_COLOR=$'\033[38;2;153;153;153m' ;;  # gray
+          high)   EFF_COLOR=$'\033[38;2;255;193;7m'   ;;  # gold
+          *)      EFF_COLOR=$'\033[38;2;255;85;85m'   ;;  # red (xhigh/max)
+        esac
+        EFFORT_PART="${DIM} · ${NC}${EFF_COLOR}${EFFORT}${NC}"
+        EFFORT_RAW=" · ${EFFORT}"
+    fi
+
+    # Rate limit 5h (only shown if available)
+    RATE_PART=""
+    RATE_RAW=""
+    if [ -n "$RATE_5H" ] && [ "$RATE_5H" != "null" ] && [ "$RATE_5H" != "" ]; then
+        if [ "${RATE_5H:-0}" -ge 80 ] 2>/dev/null; then
+            RATE_COLOR=$'\033[38;2;255;85;85m'   # red
+        elif [ "${RATE_5H:-0}" -ge 50 ] 2>/dev/null; then
+            RATE_COLOR=$'\033[38;2;255;193;7m'   # gold
+        else
+            RATE_COLOR=$'\033[38;2;78;186;101m'  # green
+        fi
+        RATE_PART="${DIM} · ${NC}${RATE_COLOR}${RATE_5H}%${NC}${DIM}5h${NC}"
+        RATE_RAW=" · ${RATE_5H}%5h"
+    fi
+
+    METRICS="${DIM}ctx ${NC}${CTX_COLOR}${CTX_DISPLAY}/${CTX_MAX_DISPLAY}${NC}${DIM} · ${NC}${DIM}${COST_DISPLAY}${NC}${DIM} · ${NC}${DIM}${SESSION_MODEL}${NC}${EFFORT_PART}${RATE_PART}"
 
     # Right-align under the art
-    METRICS_RAW="ctx ${CTX_DISPLAY}/${CTX_MAX_DISPLAY} · ${COST_DISPLAY} · ${SESSION_MODEL}"
+    METRICS_RAW="ctx ${CTX_DISPLAY}/${CTX_MAX_DISPLAY} · ${COST_DISPLAY} · ${SESSION_MODEL}${EFFORT_RAW}${RATE_RAW}"
     METRICS_LEN=${#METRICS_RAW}
     METRICS_PAD=$(( COLS - METRICS_LEN - MARGIN ))
     [ "$METRICS_PAD" -lt 0 ] && METRICS_PAD=0
