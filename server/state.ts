@@ -314,6 +314,11 @@ export interface BuddyConfig {
   bubbleMargin: number;
   useCombinedStatus: boolean;
   rainbowColors?: string[];
+  theme: "dark" | "light" | "auto";
+  moodEnabled: boolean;
+  memoryEnabled: boolean;
+  suggestionsEnabled: boolean;
+  suggestionCooldown: number;
 }
 
 const DEFAULT_CONFIG: BuddyConfig = {
@@ -326,6 +331,11 @@ const DEFAULT_CONFIG: BuddyConfig = {
   bubbleWidth: 28,
   bubbleMargin: 8,
   useCombinedStatus: false,
+  theme: "auto",
+  moodEnabled: true,
+  memoryEnabled: true,
+  suggestionsEnabled: true,
+  suggestionCooldown: 180,
 };
 
 export function loadConfig(): BuddyConfig {
@@ -361,6 +371,9 @@ export interface StatusState {
   achievement: string;
   frames: string[];
   frameSequence: number[];
+  level: number;
+  xp: number;
+  mood: string;
 }
 
 export function writeStatusState(
@@ -368,6 +381,8 @@ export function writeStatusState(
   reaction?: string,
   muted?: boolean,
   achievement?: string,
+  level?: number,
+  xp?: number,
 ): void {
   mkdirSync(STATE_DIR, { recursive: true });
   const { renderFace, RARITY_STARS } =
@@ -375,6 +390,23 @@ export function writeStatusState(
   const { getStatusFrames } =
     require("./art.ts") as typeof import("./art.ts");
   const { frames, frameSequence } = getStatusFrames(companion.bones);
+  let xpLevel = level ?? 1;
+  let xpTotal = xp ?? 0;
+  let moodStr = "focused";
+  try {
+    const { getXpState } = require("./xp.ts") as typeof import("./xp.ts");
+    const xpState = getXpState();
+    xpLevel = xpState.level;
+    xpTotal = xpState.totalXp;
+  } catch {
+    // XP state is optional during first install / version skew.
+  }
+  try {
+    const { getMood } = require("./mood.ts") as typeof import("./mood.ts");
+    moodStr = getMood().current;
+  } catch {
+    // Mood state is optional during first install / version skew.
+  }
   const state: StatusState = {
     name: companion.name,
     species: companion.bones.species,
@@ -389,6 +421,9 @@ export function writeStatusState(
     achievement: achievement ?? "",
     frames,
     frameSequence,
+    level: xpLevel,
+    xp: xpTotal,
+    mood: moodStr,
   };
   writeFileSync(join(STATE_DIR, "status.json"), JSON.stringify(state));
 }

@@ -220,10 +220,10 @@ describe("generateBones", () => {
   // The whole point of claude-buddy is that the same user always gets the
   // same companion, forever. That's only true if these stay green.
 
-  test("golden snapshot: 'golden-user-alpha' (common axolotl)", () => {
+  test("golden snapshot: 'golden-user-alpha' (common capybara)", () => {
     expect(generateBones("golden-user-alpha")).toEqual({
       rarity: "common",
-      species: "axolotl",
+      species: "capybara",
       eye: "\u00b7",
       hat: "none",
       shiny: false,
@@ -239,10 +239,10 @@ describe("generateBones", () => {
     });
   });
 
-  test("golden snapshot: 'golden-user-beta' (common mushroom)", () => {
+  test("golden snapshot: 'golden-user-beta' (common chonk)", () => {
     expect(generateBones("golden-user-beta")).toEqual({
       rarity: "common",
-      species: "mushroom",
+      species: "chonk",
       eye: "@",
       hat: "none",
       shiny: false,
@@ -258,13 +258,13 @@ describe("generateBones", () => {
     });
   });
 
-  test("golden snapshot: 'legendary-seed-1' (uncommon axolotl)", () => {
+  test("golden snapshot: 'legendary-seed-1' (uncommon capybara)", () => {
     // This one is picked because it exercises the non-common rarity branch
     // where hat is drawn from HATS (even though the result still lands on
     // 'none', which is the first hat in the list).
     expect(generateBones("legendary-seed-1")).toEqual({
       rarity: "uncommon",
-      species: "axolotl",
+      species: "capybara",
       eye: "\u25c9",
       hat: "none",
       shiny: false,

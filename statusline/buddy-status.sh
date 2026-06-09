@@ -38,6 +38,8 @@ HAT=$(jq -r '.hat // "none"' "$STATE" 2>/dev/null)
 E=$(jq -r '.eye // "°"' "$STATE" 2>/dev/null)
 REACTION=$(jq -r '.reaction // ""' "$STATE" 2>/dev/null)
 ACHIEVEMENT=$(jq -r '.achievement // ""' "$STATE" 2>/dev/null)
+LEVEL=$(jq -r '.level // 1' "$STATE" 2>/dev/null)
+MOOD=$(jq -r '.mood // "focused"' "$STATE" 2>/dev/null)
 
 # ─── Parse session metrics from stdin (JSON piped by Claude Code) ────────────
 STDIN_JSON=$(cat)
@@ -205,14 +207,25 @@ else
     [ -n "$L4" ] && ART_LINES+=("$L4")
 fi
 
-# ─── Rarity color (pC4 = dark theme, the default) ────────────────────────────
+# ─── Rarity color (theme-aware) ─────────────────────────────────────────────
+_THEME="dark"
+if [ -f "$CONFIG_FILE" ]; then
+    _cfg_theme=$(jq -r '.theme // "auto"' "$CONFIG_FILE" 2>/dev/null)
+    [ "$_cfg_theme" = "light" ] && _THEME="light"
+fi
+
 NC=$'\033[0m'
 case "$RARITY" in
-  common)    C=$'\033[38;2;153;153;153m' ;;
-  uncommon)  C=$'\033[38;2;78;186;101m'  ;;
-  rare)      C=$'\033[38;2;177;185;249m' ;;
-  epic)      C=$'\033[38;2;175;135;255m' ;;
-  legendary) C=$'\033[38;2;255;193;7m'   ;;
+  common)
+    [ "$_THEME" = "light" ] && C=$'\033[38;2;90;90;90m' || C=$'\033[38;2;153;153;153m' ;;
+  uncommon)
+    [ "$_THEME" = "light" ] && C=$'\033[38;2;22;115;55m' || C=$'\033[38;2;78;186;101m' ;;
+  rare)
+    [ "$_THEME" = "light" ] && C=$'\033[38;2;55;85;210m' || C=$'\033[38;2;177;185;249m' ;;
+  epic)
+    [ "$_THEME" = "light" ] && C=$'\033[38;2;110;55;200m' || C=$'\033[38;2;175;135;255m' ;;
+  legendary)
+    [ "$_THEME" = "light" ] && C=$'\033[38;2;180;120;0m' || C=$'\033[38;2;255;193;7m' ;;
   *)         C=$'\033[0m' ;;
 esac
 
@@ -322,11 +335,23 @@ fi
 # ART_LINES comes from the pre-rendered frame (already includes hat + blink).
 # Center the name under the art. Frames are 12 cols wide (see server/art.ts),
 # so the geometric center sits at col 6.
-NAME_LEN=${#NAME}
+NAME_WITH_LEVEL="$NAME"
+[ "$LEVEL" -gt 1 ] 2>/dev/null && NAME_WITH_LEVEL="${NAME} [L${LEVEL}]"
+case "$MOOD" in
+    happy)       MOOD_EMOJI="" ;;
+    focused)     MOOD_EMOJI="" ;;
+    excited)     MOOD_EMOJI="" ;;
+    tired)       MOOD_EMOJI="" ;;
+    melancholy)  MOOD_EMOJI="" ;;
+    chaotic)     MOOD_EMOJI="" ;;
+    *)           MOOD_EMOJI="" ;;
+esac
+NAME_WITH_LEVEL="${NAME_WITH_LEVEL}${MOOD_EMOJI}"
+NAME_LEN=${#NAME_WITH_LEVEL}
 ART_CENTER=6
 NAME_PAD=$(( ART_CENTER - NAME_LEN / 2 ))
 [ "$NAME_PAD" -lt 0 ] && NAME_PAD=0
-NAME_LINE="$(printf '%*s%s' "$NAME_PAD" '' "$NAME")"
+NAME_LINE="$(printf '%*s%s' "$NAME_PAD" '' "$NAME_WITH_LEVEL")"
 
 DIM=$'\033[2;3m'
 

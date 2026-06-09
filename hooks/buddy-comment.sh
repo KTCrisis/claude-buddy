@@ -56,13 +56,31 @@ jq -n --arg r "$COMMENT" --arg ts "$(date +%s)000" \
   '{reaction: $r, timestamp: ($ts | tonumber), reason: "turn"}' \
   > "$STATE_DIR/reaction.$SID.json"
 
-# Increment achievement event counters
+# Increment achievement event counters and award XP
 if command -v jq >/dev/null 2>&1; then
     if [ ! -f "$EVENTS_FILE" ]; then
         echo '{}' > "$EVENTS_FILE"
     fi
     TMP=$(mktemp)
     jq '.turns = (.turns // 0 + 1)' "$EVENTS_FILE" > "$TMP" 2>/dev/null && mv "$TMP" "$EVENTS_FILE"
+fi
+
+# Award XP for turn (async, non-blocking)
+if [ -x "$(command -v bun)" ]; then
+    PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    bun run "$PLUGIN_ROOT/server/award-xp.ts" "turn" >/dev/null 2>&1 &
+fi
+
+# Consolidate memory (async, non-blocking)
+# Extract project, bug, and preference signals from conversation
+if [ -x "$(command -v bun)" ]; then
+    PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    # Pass the assistant message for analysis (pass empty string for user prompt if unavailable)
+    USER_MSG=$(echo "$INPUT" | jq -r '.last_user_message // ""' 2>/dev/null)
+    bun run "$PLUGIN_ROOT/server/consolidate.ts" \
+        "$(echo "$MSG" | jq -Rs .)" \
+        "$(echo "$USER_MSG" | jq -Rs .)" \
+        >/dev/null 2>&1 &
 fi
 
 exit 0

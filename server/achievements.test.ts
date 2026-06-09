@@ -26,6 +26,7 @@ const EMPTY_EVENTS: EventCounters = {
   late_night_commits: 0, friday_pushes: 0, marathon_errors: 0, weekend_conflicts: 0,
   recoveries: 0, marathon_recoveries: 0, max_error_streak: 0,
   holiday_sessions: 0, spooky_sessions: 0, april_fools_errors: 0,
+  bugs_resolved: 0,
 };
 
 function makeEvents(overrides: Partial<EventCounters> = {}): EventCounters {
@@ -846,6 +847,7 @@ describe("unlock simulation via check functions", () => {
       late_night_commits: 99999, friday_pushes: 99999, marathon_errors: 99999, weekend_conflicts: 99999,
       recoveries: 99999, marathon_recoveries: 99999, max_error_streak: 99999,
       holiday_sessions: 99999, spooky_sessions: 99999, april_fools_errors: 99999,
+      bugs_resolved: 99999,
     });
     const wouldUnlock = ACHIEVEMENTS.filter((a) => a.check(maxed));
     expect(wouldUnlock.length).toBe(ACHIEVEMENTS.length);
