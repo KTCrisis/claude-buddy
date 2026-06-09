@@ -5,6 +5,8 @@
 
 set -eu
 
+export PATH="$HOME/.bun/bin:$PATH"
+
 if ! command -v bun >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 [claude-buddy] ERROR: 'bun' was not found on PATH.
