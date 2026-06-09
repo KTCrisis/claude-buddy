@@ -1,7 +1,7 @@
 /**
  * ASCII art for all 18 buddy species
  *
- * Each species has 3 animation frames (idle variations).
+ * Each species has 3+ animation frames (idle variations).
  * Each frame is 5 lines, ~12 chars wide.
  * {E} is replaced with the eye character at render time.
  */
@@ -13,9 +13,11 @@ import { getRarityColor } from "./theme.ts";
 
 export const SPECIES_ART: Record<Species, string[][]> = {
   duck: [
-    ["            ", "    __      ", "  <({E} )___  ", "   (  ._>   ", "    `--'    "],
-    ["            ", "    __      ", "  <({E} )___  ", "   (  ._>   ", "    `--'~   "],
-    ["            ", "    __      ", "  <({E} )___  ", "   (  .__>  ", "    `--'    "],
+    ["            ", "    __      ", "  <({E} )___  ", "   ( ._> /  ", "    `---'   "],
+    ["            ", "    __      ", "  <({E} )___  ", "   ( ._> /  ", "    `---'~  "],
+    ["            ", "    __      ", "  <({E} )___  ", "   ( .__>/  ", "    `---'   "],
+    ["            ", "    __      ", "  <( {E})___  ", "   ( ._> /  ", "    `---'   "],
+    ["            ", "    __      ", "  <({E} )___  ", "   ( ._> /  ", "    `-^-'   "],
   ],
   goose: [
     ["            ", "     ({E}>    ", "     ||     ", "   _(__)_   ", "    ^^^^    "],
@@ -159,6 +161,10 @@ function applyHat(species: Species, hat: Hat, art: string[]): void {
   if (species === "wyvern") {
     const wyvernLine = WYVERN_HAT[hat];
     if (wyvernLine) art[0] = wyvernLine;
+  } else if (species === "duck") {
+    // The duck's line 1 is the head top (__) — the hat replaces it so it
+    // sits on the head instead of floating a row above.
+    art[1] = HAT_ART[hat];
   } else if (!art[0].trim()) {
     art[0] = HAT_ART[hat];
   }
@@ -251,22 +257,23 @@ export function getStatusFrames(bones: BuddyBones): {
   const resolveFrame = (frameIdx: number, eye: string): string => {
     const raw = SPECIES_ART[bones.species][frameIdx];
     const art = raw.map((line) => line.replace(/\{E\}/g, eye));
-    const hatLine = HAT_ART[bones.hat];
-    if (hatLine && !art[0].trim()) {
-      art[0] = hatLine;
-    }
+    applyHat(bones.species, bones.hat, art);
     return art.join("\n");
   };
 
-  return {
-    frames: [
-      resolveFrame(0, bones.eye),
-      resolveFrame(1, bones.eye),
-      resolveFrame(2, bones.eye),
-      resolveFrame(0, "-"),
-    ],
-    frameSequence: [...STATUS_FRAME_SEQUENCE],
-  };
+  const idleCount = SPECIES_ART[bones.species].length;
+  const blink = idleCount; // blink frame is always baked last
+  const frames = Array.from({ length: idleCount }, (_, i) =>
+    resolveFrame(i, bones.eye),
+  );
+  frames.push(resolveFrame(0, "-"));
+
+  // Base cycle slots blink where legacy index 3 sat; species with more than
+  // 3 idle frames get one beat per extra frame appended, padded with idles.
+  const frameSequence = STATUS_FRAME_SEQUENCE.map((i) => (i === 3 ? blink : i));
+  for (let i = 3; i < idleCount; i++) frameSequence.push(i, 0, 0);
+
+  return { frames, frameSequence };
 }
 
 export function renderCompanionCard(
