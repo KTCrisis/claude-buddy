@@ -13,11 +13,10 @@ import { getRarityColor } from "./theme.ts";
 
 export const SPECIES_ART: Record<Species, string[][]> = {
   duck: [
-    ["            ", "    __      ", "  <({E} )___  ", "   ( ._> /  ", "    `---'   "],
-    ["            ", "    __      ", "  <({E} )___  ", "   ( ._> /  ", "    `---'~  "],
+    ["            ", "    __      ", "  <({E} )___  ", "   (  ._>/  ", "    `---'   "],
+    ["            ", "    __      ", "  <({E} )___  ", "   (  ._>/  ", "    `---'~  "],
     ["            ", "    __      ", "  <({E} )___  ", "   ( .__>/  ", "    `---'   "],
-    ["            ", "    __      ", "  <( {E})___  ", "   ( ._> /  ", "    `---'   "],
-    ["            ", "    __      ", "  <({E} )___  ", "   ( ._> /  ", "    `-^-'   "],
+    ["            ", "    __      ", "  <({E} )___  ", "   (  ._>/  ", "    `-^-'   "],
   ],
   goose: [
     ["            ", "     ({E}>    ", "     ||     ", "   _(__)_   ", "    ^^^^    "],
@@ -261,17 +260,22 @@ export function getStatusFrames(bones: BuddyBones): {
     return art.join("\n");
   };
 
+  // The eye animates in place: idle frames keep the configured eye, then a
+  // blink (-) and a rare cross-eye (×) are baked as the last two frames.
   const idleCount = SPECIES_ART[bones.species].length;
-  const blink = idleCount; // blink frame is always baked last
+  const blink = idleCount;
+  const cross = idleCount + 1;
   const frames = Array.from({ length: idleCount }, (_, i) =>
     resolveFrame(i, bones.eye),
   );
-  frames.push(resolveFrame(0, "-"));
+  frames.push(resolveFrame(0, "-"), resolveFrame(0, "×"));
 
   // Base cycle slots blink where legacy index 3 sat; species with more than
-  // 3 idle frames get one beat per extra frame appended, padded with idles.
+  // 3 idle frames get one beat per extra frame appended, padded with idles,
+  // and the cross-eye lands once at the end of the cycle.
   const frameSequence = STATUS_FRAME_SEQUENCE.map((i) => (i === 3 ? blink : i));
   for (let i = 3; i < idleCount; i++) frameSequence.push(i, 0, 0);
+  frameSequence.push(cross, 0, 0);
 
   return { frames, frameSequence };
 }

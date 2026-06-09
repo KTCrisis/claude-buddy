@@ -75,16 +75,16 @@ describe("getStatusFrames", () => {
     ...overrides,
   });
 
-  test("produces 4 frames and a 15-tick sequence", () => {
+  test("produces 5 frames and the base sequence plus a cross-eye beat", () => {
     const { frames, frameSequence } = getStatusFrames(bones());
-    expect(frames).toHaveLength(4);
-    expect(frameSequence).toEqual([...STATUS_FRAME_SEQUENCE]);
+    expect(frames).toHaveLength(5);
+    expect(frameSequence).toEqual([...STATUS_FRAME_SEQUENCE, 4, 0, 0]);
   });
 
-  test("every species produces idle frames + blink, each with 5-6 lines", () => {
+  test("every species produces idle frames + blink + cross-eye, each with 5-6 lines", () => {
     for (const species of SPECIES) {
       const { frames } = getStatusFrames(bones({ species }));
-      expect(frames).toHaveLength(SPECIES_ART[species].length + 1);
+      expect(frames).toHaveLength(SPECIES_ART[species].length + 2);
       for (const body of frames) {
         const lines = body.split("\n").length;
         expect(lines).toBeGreaterThanOrEqual(5);
@@ -99,15 +99,20 @@ describe("getStatusFrames", () => {
     expect(frames[0]).not.toContain("{E}");
   });
 
-  test("blink frame (last index) replaces the configured eye with '-'", () => {
-    const { frames } = getStatusFrames(bones({ species: "capybara", eye: "@" }));
-    expect(frames[3]).not.toContain("@");
-    expect(frames[3]).toContain("-");
-
-    const duck = getStatusFrames(bones({ species: "duck", eye: "@" }));
-    const duckBlink = duck.frames[duck.frames.length - 1];
-    expect(duckBlink).not.toContain("@");
-    expect(duckBlink).toContain("-");
+  test("blink and cross-eye frames replace the configured eye in place", () => {
+    for (const species of ["capybara", "duck"] as const) {
+      const { frames } = getStatusFrames(bones({ species, eye: "@" }));
+      const blink = frames[frames.length - 2];
+      const cross = frames[frames.length - 1];
+      expect(blink).not.toContain("@");
+      expect(blink).toContain("-");
+      expect(cross).not.toContain("@");
+      expect(cross).toContain("×");
+      // eye animates in place: frames only differ where the eye glyph sits
+      const idle = frames[0];
+      expect(cross.length).toBe(idle.length);
+      expect(cross.replaceAll("×", "@")).toBe(idle);
+    }
   });
 
   test("hat overlays line 0 when the species frame has no line-0 content", () => {
