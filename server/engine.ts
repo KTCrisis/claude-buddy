@@ -30,6 +30,30 @@ export const SPECIES = [
 
 export type Species = (typeof SPECIES)[number];
 
+// Closest available emoji per species (no axolotl/capybara/chonk emoji exist)
+export const SPECIES_EMOJI: Record<Species, string> = {
+  duck: "🦆",
+  goose: "🪿",
+  blob: "🫧",
+  cat: "🐱",
+  dragon: "🐉",
+  octopus: "🐙",
+  owl: "🦉",
+  penguin: "🐧",
+  turtle: "🐢",
+  snail: "🐌",
+  ghost: "👻",
+  axolotl: "🦎",
+  capybara: "🦫",
+  cactus: "🌵",
+  robot: "🤖",
+  rabbit: "🐰",
+  mushroom: "🍄",
+  chonk: "🐹",
+  wyvern: "🐲",
+  pikachu: "⚡",
+};
+
 export const RARITIES = [
   "common",
   "uncommon",

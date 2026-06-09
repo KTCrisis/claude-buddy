@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # buddy-comment Stop hook
-# Extracts hidden buddy comment from Claude's response.
-# Claude writes: <!-- buddy: *adjusts tophat* nice code -->
+# Extracts the buddy comment from Claude's response.
+# Claude writes a final blockquote line: > 🦆 duck7 : *adjusts tophat* nice code
 # This hook extracts it and updates the status line bubble.
-# The HTML comment is invisible in rendered markdown output.
+# Legacy format <!-- buddy: ... --> is still matched as a fallback.
 
 # shellcheck source=../scripts/paths.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../scripts/paths.sh"
@@ -33,8 +33,13 @@ INPUT=$(cat)
 MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // ""' 2>/dev/null)
 [ -z "$MSG" ] && exit 0
 
-# Extract <!-- buddy: ... --> comment (portable, no grep -P)
-COMMENT=$(echo "$MSG" | sed -n 's/.*<!-- *buddy: *\(.*[^ ]\) *-->.*/\1/p' | tail -1)
+# Extract the signed blockquote line: "> <emoji> <name> : reaction"
+# Name comes from status.json; emoji (anything before the name) is optional.
+NAME=$(jq -r '.name // "buddy"' "$STATUS_FILE" 2>/dev/null)
+NAME=${NAME:-buddy}
+COMMENT=$(echo "$MSG" | sed -n "s/^> *\([^:]* \)\{0,1\}$NAME *: *\(.*[^ ]\) *$/\2/p" | tail -1)
+# Fallback: legacy invisible HTML comment <!-- buddy: ... -->
+[ -z "$COMMENT" ] && COMMENT=$(echo "$MSG" | sed -n 's/.*<!-- *buddy: *\(.*[^ ]\) *-->.*/\1/p' | tail -1)
 [ -z "$COMMENT" ] && exit 0
 
 # Cooldown: configurable (default 30s)
