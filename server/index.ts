@@ -16,6 +16,7 @@ import {
   generatePersonality,
   renderFace,
   SPECIES,
+  SPECIES_EMOJI,
   RARITIES,
   STAT_NAMES,
   RARITY_STARS,
@@ -110,12 +111,12 @@ function getInstructions(): string {
     `- Same variable renamed multiple times → "Update all the references too."`,
     `Only suggest when you have something specific and actionable to say. Don't be annoying.`,
     ``,
-    `END-OF-TURN: At the very end of EVERY response, append an invisible HTML comment:`,
-    `<!-- buddy: [reaction here] -->`,
+    `END-OF-TURN: At the very end of EVERY response, append a final blockquote line:`,
+    `> ${SPECIES_EMOJI[b.species]} ${companion.name} : [reaction here]`,
     `Write it in ${companion.name}'s voice — 1 short sentence referencing something specific from this turn.`,
     `Use *asterisks* for actions. A Stop hook extracts this for the status line.`,
-    `Do NOT use buddy_react for end-of-turn comments. Do NOT explain the comment. Just append it silently.`,
-    `Example: <!-- buddy: *adjusts crown* that error handler is missing a finally block -->`,
+    `Do NOT use buddy_react for end-of-turn comments. Do NOT explain the line. Just append it.`,
+    `Example: > ${SPECIES_EMOJI[b.species]} ${companion.name} : *adjusts crown* that error handler is missing a finally block`,
   ].join("\n");
 }
 
